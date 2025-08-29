@@ -24,6 +24,10 @@ import backtester
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Stock Analysis API v17.1 (Type-Safe)", version="17.1.0")
+# Add this new root route
+@app.get("/")
+async def root():
+    return {"message": "StockIQ API is running successfully!"}
 
 # --- Security & DB Setup ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
