@@ -37,7 +37,8 @@ TRANSACTIONS_DB_FILE = "transactions.json"
 # --- Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000",
+                   "https://stockiqapp.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
