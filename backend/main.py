@@ -38,7 +38,8 @@ TRANSACTIONS_DB_FILE = "transactions.json"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000",
-                   "https://stockiqapp.onrender.com"],
+                   "https://stockiqapp.onrender.com",
+                   "https://stockiqapp.netlify.app/login"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -893,7 +893,7 @@ const ExportPage = () => {
     const handleExport = () => {
         if (!ticker) { return; }
         setExportLoading(true);
-        const API_URL = "http://127.0.0.1:8000";
+        const API_URL = "https://stockiqapp.onrender.com";
         window.location.href = `${API_URL}/export?ticker=${ticker}&startDate=${startDate}&endDate=${endDate}`;
         setTimeout(() => setExportLoading(false), 2000);
     };
