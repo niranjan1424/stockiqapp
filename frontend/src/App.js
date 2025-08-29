@@ -1440,7 +1440,7 @@ const AppContextProvider = ({ children }) => {
     useEffect(() => {
         const location = window.location.pathname;
         if (analyzedTicker && !['/indicators', '/bot'].includes(location)) {
-            fetchStockData(analyzedTicker, timeFilter, true); // Use isFullReload=true to get predictions
+            fetchStockData(analyzedTicker, timeFilter, true);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [timeFilter]);
