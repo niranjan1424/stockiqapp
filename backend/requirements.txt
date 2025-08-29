@@ -5,6 +5,7 @@ vaderSentiment
 appdirs==1.4.4
 beautifulsoup4==4.13.4
 bs4==0.0.2
+bcrypt==3.2.2
 certifi==2025.6.15
 cffi==1.17.1
 charset-normalizer==3.4.2
