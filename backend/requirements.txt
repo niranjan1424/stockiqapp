@@ -2,6 +2,7 @@ fastapi==0.104.1
 uvicorn==0.23.2
 gunicorn==21.2.0
 passlib[bcrypt]==1.7.4
+bcrypt==3.2.2  # <--- ADD THIS LINE to fix the passlib warning
 python-multipart==0.0.6
 
 # --- Core Data & ML Libraries (Pinned to stable versions) ---
