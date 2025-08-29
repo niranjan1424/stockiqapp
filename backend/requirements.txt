@@ -21,6 +21,8 @@ seaborn==0.13.0
 
 # --- Indicators & Finance ---
 pandas-ta==0.3.14b
+yfinance==0.2.36      # <--- RESTORED
+yahoo-fin==0.8.9.1    # <--- RESTORED
 
 # --- Web Scraping & Parsing ---
 vaderSentiment==3.3.2
