@@ -33,7 +33,7 @@ PERIOD_MAPPING = {
     "6M": "4hour", "1Y": "daily", "5Y": "daily", "ALL": "daily"
 }
 DATE_RANGES = {
-    "1D": (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
+    "1D": (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d'),
     "1W": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
     "1M": (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
     "6M": (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d'),
@@ -61,7 +61,6 @@ async def fetch_historical_data(ticker: str, period_key: str) -> pd.DataFrame:
         response.raise_for_status()
         data = response.json()
         
-        # The 'ALL' endpoint has a different structure
         if "historical" in data:
             data = data["historical"]
             
@@ -102,12 +101,18 @@ async def fetch_stock_info(ticker: str) -> Optional[Dict[str, Any]]:
             return None
 
         info = data[0]
+        # Fetch quote data to get previous close
+        quote_endpoint = f"/quote/{ticker}?apikey={API_KEY}"
+        quote_response = requests.get(f"{BASE_URL}{quote_endpoint}")
+        quote_data = quote_response.json()
+        previous_close = quote_data[0].get("previousClose") if (quote_data and isinstance(quote_data, list)) else info.get("price")
+
         required_info = {
             "symbol": info.get("symbol"),
             "currentPrice": info.get("price"),
-            "previousClose": info.get("previousClose"),
+            "previousClose": previous_close,
             "marketCap": info.get("mktCap"),
-            "trailingPE": None, # FMP doesn't provide this directly in the free tier
+            "trailingPE": None,
             "launchDate": info.get("ipoDate")
         }
         set_in_cache(cache_key, required_info)
@@ -120,27 +125,38 @@ async def fetch_stock_info(ticker: str) -> Optional[Dict[str, Any]]:
 async def fetch_batch_stock_info(tickers: List[str]) -> Dict[str, Any]:
     if not tickers: return {}
     
-    # FMP recommends batching up to a certain limit, but for simplicity, we'll fetch them individually for now.
-    results = {}
-    for ticker in tickers:
-        try:
-            endpoint = f"/quote/{ticker}?apikey={API_KEY}"
-            response = requests.get(f"{BASE_URL}{endpoint}")
-            data = response.json()
-            if data and isinstance(data, list) and data[0]:
-                info = data[0]
-                results[ticker] = {
-                    "currentPrice": info.get("price", 0),
-                    "change": info.get("change", 0),
-                    "percentChange": info.get("changesPercentage", 0)
-                }
-            else:
-                results[ticker] = {"currentPrice": 0, "change": 0, "percentChange": 0}
-        except Exception as e:
-            logger.error(f"Batch fetch for ticker {ticker} failed: {e}")
-            results[ticker] = {"currentPrice": 0, "change": 0, "percentChange": 0}
-    return results
+    ticker_string = ",".join(tickers)
+    cache_key = f"batch_{ticker_string}"
+    cached_data = get_from_cache(cache_key)
+    if cached_data is not None:
+        return cached_data
 
+    try:
+        endpoint = f"/quote/{ticker_string}?apikey={API_KEY}"
+        response = requests.get(f"{BASE_URL}{endpoint}")
+        response.raise_for_status()
+        data = response.json()
+
+        results = {}
+        if data and isinstance(data, list):
+            for item in data:
+                ticker = item.get("symbol")
+                if ticker:
+                    results[ticker] = {
+                        "currentPrice": item.get("price", 0),
+                        "change": item.get("change", 0),
+                        "percentChange": item.get("changesPercentage", 0)
+                    }
+        # Fill in any missing tickers
+        for t in tickers:
+            if t not in results:
+                results[t] = {"currentPrice": 0, "change": 0, "percentChange": 0}
+        
+        set_in_cache(cache_key, results)
+        return results
+    except Exception as e:
+        logger.error(f"Batch fetch failed for tickers {tickers}: {e}")
+        return {t: {"currentPrice": 0, "change": 0, "percentChange": 0} for t in tickers}
 
 async def fetch_data_for_range(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     endpoint = f"/historical-price-full/{ticker}?from={start_date}&to={end_date}&apikey={API_KEY}"

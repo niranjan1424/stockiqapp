@@ -4,7 +4,7 @@ gunicorn==21.2.0
 passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
 python-multipart==0.0.6
-requests==2.31.0 # <--- ADD THIS
+requests==2.31.0
 
 # --- Core Data & ML Libraries (Pinned to stable versions) ---
 numpy==1.24.4
@@ -21,9 +21,6 @@ seaborn==0.13.0
 
 # --- Indicators & Finance ---
 pandas-ta==0.3.14b
-# yfinance and yahoo-fin are no longer needed but we can keep them for now
-yfinance==0.2.36
-yahoo-fin==0.8.9.1
 
 # --- Web Scraping & Parsing ---
 vaderSentiment==3.3.2
