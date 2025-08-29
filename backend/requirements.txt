@@ -35,7 +35,6 @@ parse==1.20.2
 peewee==3.18.1
 pillow==11.2.1
 platformdirs==4.3.8
-protobuf==3.20.3
 pycparser==2.22
 pyee==11.1.1
 pyparsing==3.2.3
