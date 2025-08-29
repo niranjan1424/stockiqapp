@@ -1,20 +1,23 @@
-import yfinance as yf
+import requests
 import pandas as pd
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
-import asyncio
+import os
 import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- API Configuration ---
+API_KEY = os.getenv("FMP_API_KEY")
+BASE_URL = "https://financialmodelingprep.com/api/v3"
+
 # --- Caching Mechanism ---
 CACHE: Dict[str, Any] = {}
-CACHE_EXPIRY_SECONDS = 60  # Cache data for 1 minute
+CACHE_EXPIRY_SECONDS = 60
 
 def get_from_cache(key: str) -> Optional[Any]:
-    """Checks if a valid, non-expired item is in the cache."""
     if key in CACHE:
         data, timestamp = CACHE[key]
         if time.time() - timestamp < CACHE_EXPIRY_SECONDS:
@@ -22,149 +25,135 @@ def get_from_cache(key: str) -> Optional[Any]:
     return None
 
 def set_in_cache(key: str, data: Any):
-    """Adds an item to the cache with a timestamp."""
     CACHE[key] = (data, time.time())
 
-# --- Preserved PERIOD_MAPPING for correct graph intervals ---
+# --- Mappings ---
 PERIOD_MAPPING = {
-    "1D": {"period": "2d", "interval": "5m"},
-    "1W": {"period": "5d", "interval": "30m"},
-    "1M": {"period": "1mo", "interval": "90m"},
-    "6M": {"period": "6mo", "interval": "1d"},
-    "1Y": {"period": "1y", "interval": "1d"},
-    "5Y": {"period": "5y", "interval": "1wk"},
-    "ALL": {"period": "max", "interval": "1mo"},
+    "1D": "1min", "1W": "5min", "1M": "30min",
+    "6M": "4hour", "1Y": "daily", "5Y": "daily", "ALL": "daily"
+}
+DATE_RANGES = {
+    "1D": (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
+    "1W": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
+    "1M": (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
+    "6M": (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d'),
+    "1Y": (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'),
+    "5Y": (datetime.now() - timedelta(days=365*5)).strftime('%Y-%m-%d'),
 }
 
 async def fetch_historical_data(ticker: str, period_key: str) -> pd.DataFrame:
-    """
-    Fetches historical data using the PERIOD_MAPPING for correct intervals,
-    with caching, retries, and robust error handling.
-    """
     cache_key = f"history_{ticker}_{period_key}"
     cached_data = get_from_cache(cache_key)
     if isinstance(cached_data, pd.DataFrame):
         return cached_data
 
-    params = PERIOD_MAPPING.get(period_key, PERIOD_MAPPING["1M"])
-    stock = yf.Ticker(ticker)
+    interval = PERIOD_MAPPING.get(period_key, "daily")
+    
+    if period_key in DATE_RANGES:
+        from_date = DATE_RANGES[period_key]
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        endpoint = f"/historical-chart/{interval}/{ticker}?from={from_date}&to={to_date}&apikey={API_KEY}"
+    else: # For 'ALL'
+        endpoint = f"/historical-price-full/{ticker}?apikey={API_KEY}"
 
-    for attempt in range(3):
-        try:
-            df = stock.history(period=params["period"], interval=params["interval"], auto_adjust=True)
+    try:
+        response = requests.get(f"{BASE_URL}{endpoint}")
+        response.raise_for_status()
+        data = response.json()
+        
+        # The 'ALL' endpoint has a different structure
+        if "historical" in data:
+            data = data["historical"]
             
-            if not df.empty:
-                df.reset_index(inplace=True)
-                date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
-                df.rename(columns={date_col: "Date"}, inplace=True)
-                df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
-                
-                final_df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-                set_in_cache(cache_key, final_df)
-                return final_df
+        if not data or not isinstance(data, list):
+            logger.warning(f"No historical data found for {ticker} for period {period_key}")
+            return pd.DataFrame()
 
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"YFinance fetch_historical_data attempt {attempt + 1} failed for {ticker}: {e}")
-            await asyncio.sleep(1)
-            
-    return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+        df['Date'] = pd.to_datetime(df['Date'])
+        
+        set_in_cache(cache_key, df)
+        return df.sort_values(by='Date', ascending=True)
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request failed for {ticker} historical data: {e}")
+        return pd.DataFrame()
+    except Exception as e:
+        logger.error(f"Error processing historical data for {ticker}: {e}")
+        return pd.DataFrame()
 
 
 async def fetch_stock_info(ticker: str) -> Optional[Dict[str, Any]]:
-    """ Safely fetches stock info with caching and handles cases where the info is None. """
     cache_key = f"info_{ticker}"
     cached_data = get_from_cache(cache_key)
     if cached_data is not None:
         return cached_data
-        
+    
+    endpoint = f"/profile/{ticker}?apikey={API_KEY}"
+    
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
+        response = requests.get(f"{BASE_URL}{endpoint}")
+        response.raise_for_status()
+        data = response.json()
 
-        if info is None or info.get("symbol") is None:
-            logger.warning(f"Could not retrieve valid info for ticker: {ticker}")
+        if not data or not isinstance(data, list) or not data[0]:
+            logger.warning(f"No profile info found for {ticker}")
             return None
-        
-        launch_date = "N/A"
-        timestamp = info.get("firstTradeDateEpochUtc")
-        if timestamp is not None and isinstance(timestamp, (int, float)):
-            launch_date = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
-        
+
+        info = data[0]
         required_info = {
             "symbol": info.get("symbol"),
-            "currentPrice": info.get("regularMarketPrice") or info.get("currentPrice"),
+            "currentPrice": info.get("price"),
             "previousClose": info.get("previousClose"),
-            "marketCap": info.get("marketCap"),
-            "trailingPE": info.get("trailingPE"),
-            "launchDate": launch_date
+            "marketCap": info.get("mktCap"),
+            "trailingPE": None, # FMP doesn't provide this directly in the free tier
+            "launchDate": info.get("ipoDate")
         }
         set_in_cache(cache_key, required_info)
         return required_info
-
     except Exception as e:
-        logger.error(f"An exception occurred in fetch_stock_info for {ticker}: {e}")
+        logger.error(f"Error fetching stock info for {ticker}: {e}")
         return None
-
-async def fetch_data_for_range(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(start=start_date, end=end_date, interval="1d", auto_adjust=True)
-        if df.empty: return pd.DataFrame()
-        df.reset_index(inplace=True)
-        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
-        return df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-    except Exception as e:
-        logger.error(f"YFinance fetch_data_for_range failed for {ticker}: {e}")
-        return pd.DataFrame()
 
 
 async def fetch_batch_stock_info(tickers: List[str]) -> Dict[str, Any]:
-    """
-    Fetches info for a batch of tickers more efficiently with caching and retries.
-    """
     if not tickers: return {}
     
-    cache_key = f"batch_{','.join(sorted(tickers))}"
-    cached_data = get_from_cache(cache_key)
-    if cached_data is not None:
-        return cached_data
-
-    try:
-        data = yf.download(tickers, period="2d", progress=False)
-        # Add an explicit check to ensure data is not None before proceeding
-        if data is None or data.empty or 'Close' not in data:
-            return {ticker: {"currentPrice": 0, "change": 0, "percentChange": 0} for ticker in tickers}
-
-        results = {}
-        for ticker in tickers:
-            close_prices = None
-            # Handle both single-ticker and multi-ticker DataFrame structures
-            if len(tickers) == 1:
-                close_prices = data['Close']
-            elif isinstance(data.get('Close'), pd.DataFrame):
-                close_prices = data.get('Close', {}).get(ticker)
-            
-            if close_prices is not None and not close_prices.dropna().empty:
-                current_price = close_prices.iloc[-1]
-                previous_close = close_prices.iloc[-2] if len(close_prices) > 1 else current_price
-                
-                if pd.isna(current_price): current_price = previous_close
-                if pd.isna(previous_close): previous_close = current_price
-                
-                change = current_price - previous_close
-                percent_change = (change / previous_close) * 100 if previous_close != 0 else 0
-
+    # FMP recommends batching up to a certain limit, but for simplicity, we'll fetch them individually for now.
+    results = {}
+    for ticker in tickers:
+        try:
+            endpoint = f"/quote/{ticker}?apikey={API_KEY}"
+            response = requests.get(f"{BASE_URL}{endpoint}")
+            data = response.json()
+            if data and isinstance(data, list) and data[0]:
+                info = data[0]
                 results[ticker] = {
-                    "currentPrice": float(current_price),
-                    "change": float(change),
-                    "percentChange": float(percent_change)
+                    "currentPrice": info.get("price", 0),
+                    "change": info.get("change", 0),
+                    "percentChange": info.get("changesPercentage", 0)
                 }
             else:
-                 results[ticker] = { "currentPrice": 0, "change": 0, "percentChange": 0 }
+                results[ticker] = {"currentPrice": 0, "change": 0, "percentChange": 0}
+        except Exception as e:
+            logger.error(f"Batch fetch for ticker {ticker} failed: {e}")
+            results[ticker] = {"currentPrice": 0, "change": 0, "percentChange": 0}
+    return results
 
-        set_in_cache(cache_key, results)
-        return results
+
+async def fetch_data_for_range(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    endpoint = f"/historical-price-full/{ticker}?from={start_date}&to={end_date}&apikey={API_KEY}"
+    try:
+        response = requests.get(f"{BASE_URL}{endpoint}")
+        response.raise_for_status()
+        data = response.json().get("historical", [])
+        if not data: return pd.DataFrame()
+
+        df = pd.DataFrame(data)
+        df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+        df['Date'] = pd.to_datetime(df['Date'])
+        return df.sort_values(by='Date', ascending=True)
     except Exception as e:
-        logger.error(f"Batch fetch failed for tickers {tickers}: {e}")
-        return {ticker: {"currentPrice": 0, "change": 0, "percentChange": 0} for ticker in tickers}
+        logger.error(f"Date range fetch failed for {ticker}: {e}")
+        return pd.DataFrame()
