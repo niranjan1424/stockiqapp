@@ -1,0 +1,32 @@
+{
+    "niranjan": [
+        {
+            "type": "SELL",
+            "ticker": "TATASTEEL.NS",
+            "quantity": 1.0,
+            "price": 159.63,
+            "timestamp": "2025-08-25T17:51:08.537Z"
+        },
+        {
+            "type": "BUY",
+            "ticker": "TATASTEEL.NS",
+            "quantity": 10.0,
+            "price": 159.63,
+            "timestamp": "2025-08-25T17:50:36.505Z"
+        },
+        {
+            "type": "BUY",
+            "ticker": "TATAMOTORS.NS",
+            "quantity": 1.0,
+            "price": 686.8,
+            "timestamp": "2025-08-25T17:48:03.684Z"
+        },
+        {
+            "type": "BUY",
+            "ticker": "TATASTEEL.NS",
+            "quantity": 1.0,
+            "price": 159.63,
+            "timestamp": "2025-08-25T17:24:35.437Z"
+        }
+    ]
+}

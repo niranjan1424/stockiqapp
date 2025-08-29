@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* A beautiful, animated gradient background */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@keyframes gradient-animation {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animated-gradient {
+  background-size: 200% 200%;
+  animation: gradient-animation 15s ease infinite;
+}
+
+/* FIX for Button Visibility in Light Mode */
+.nav-link.active {
+  background-color: #4f46e5; /* indigo-600 */
+  color: white;
+}
+
+/* FIX for Time Period Button on Indicator/Chart Page */
+.time-filter-btn[data-state='active'] {
+    background-color: #e0e7ff; /* indigo-200 */
+    color: #3730a3; /* indigo-800 */
+    border-color: #a5b4fc; /* indigo-300 */
+}
+
+.dark .time-filter-btn[data-state='active'] {
+    background-color: #3730a3; /* indigo-800 */
+    color: #e0e7ff; /* indigo-200 */
+}
