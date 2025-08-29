@@ -39,7 +39,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000",
                    "https://stockiqapp.onrender.com",
-                   "https://stockiqapp.netlify.app/login"],
+                   "https://stockiqapp.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
