@@ -1,5 +1,5 @@
-# main.py
 import logging
+import os  # <-- Added for robust path handling
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -23,8 +23,8 @@ import backtester
 # --- App Setup ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Stock Analysis API v17.1 (Type-Safe)", version="17.1.0")
-# Add this new root route
+app = FastAPI(title="Stock Analysis API v17.2 (Robust File Handling)", version="17.2.0")
+
 @app.get("/")
 async def root():
     return {"message": "StockIQ API is running successfully!"}
@@ -35,11 +35,17 @@ USERS_DB_FILE = "users.json"
 TRANSACTIONS_DB_FILE = "transactions.json"
 
 # --- Middleware ---
+
+# Define the origins that are allowed to connect to this backend
+origins = [
+    "http://localhost:3000",
+    "https://stockiqapp.onrender.com",
+    "https://stockiqapp.netlify.app"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000",
-                   "https://stockiqapp.onrender.com",
-                   "https://stockiqapp.netlify.app"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -170,17 +176,34 @@ async def get_market_indices():
 
 @app.get("/get_all_tickers", response_model=List[str])
 async def get_all_tickers():
+    international_tickers = ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN", "NVDA", "META", "BTC-USD", "ETH-USD"]
+    
     try:
-        international_tickers = ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN", "NVDA", "META", "BTC-USD", "ETH-USD"]
-        df = pd.read_csv('nse_tickers.csv')
-        indian_tickers = [f"{symbol.strip()}.NS" for symbol in df['SYMBOL'].dropna().unique()] + ["HINDZINC.NS"]
-        return sorted(list(set(international_tickers + indian_tickers)))
-    except FileNotFoundError:
-        logger.error("CRITICAL: 'nse_tickers.csv' not found. Search will only show international stocks.")
-        return ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN", "NVDA", "META", "BTC-USD", "ETH-USD", "HINDZINC.NS"]
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.join(current_dir, 'nse_tickers.csv')
+        
+        logger.info(f"Attempting to read tickers from: {csv_path}")
+        
+        if not os.path.exists(csv_path):
+            logger.error(f"CRITICAL: 'nse_tickers.csv' does not exist at path: {csv_path}")
+            raise HTTPException(status_code=500, detail="Server configuration error: Ticker file is missing.")
+
+        df = pd.read_csv(csv_path)
+        
+        if 'SYMBOL' not in df.columns:
+            logger.error("CRITICAL: 'nse_tickers.csv' is missing the required 'SYMBOL' column.")
+            raise HTTPException(status_code=500, detail="Server configuration error: Ticker file is malformed.")
+
+        df.dropna(subset=['SYMBOL'], inplace=True)
+        indian_tickers = [f"{symbol.strip()}.NS" for symbol in df['SYMBOL'].unique()] + ["HINDZINC.NS"]
+        
+        all_tickers = sorted(list(set(international_tickers + indian_tickers)))
+        logger.info(f"Successfully loaded {len(all_tickers)} tickers.")
+        return all_tickers
+
     except Exception as e:
-        logger.error(f"An error occurred reading nse_tickers.csv: {e}")
-        return ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN", "NVDA", "META", "BTC-USD", "ETH-USD", "HINDZINC.NS"]
+        logger.error(f"An unexpected error occurred while reading nse_tickers.csv: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An internal error occurred while loading stock tickers.")
 
 @app.get("/get-exchange-rate", response_model=ExchangeRateResponse)
 async def get_exchange_rate():
@@ -211,7 +234,6 @@ async def analyze_stock(req: AnalysisRequest):
         if not stock_info or not stock_info.get("symbol"):
             raise HTTPException(status_code=404, detail=f"Could not retrieve info for '{req.ticker}'.")
 
-        # FIXED: Convert the list of Pydantic models to a list of dicts
         indicators_as_dicts = [ind.dict() for ind in req.indicators]
         df_with_indicators = indicators.calculate_indicators(df_chart.set_index('Date'), indicators_as_dicts)
         
@@ -287,7 +309,6 @@ async def run_backtest(req: BacktestRequest):
             {"name": "BBands", "params": {"period": 20, "std_dev": 2}},
         ]
         df_with_indicators = indicators.calculate_indicators(df.copy(), default_indicators)
-        # We need a scoring function for backtesting, let's assume one exists in the backtester module
         results = backtester.backtest_strategy(df_with_indicators.reset_index(), holding_days=req.holding_days, min_score=req.min_score, stop_loss_pct=req.stop_loss_pct, take_profit_pct=req.take_profit_pct)
         summary = {}
         if results:
