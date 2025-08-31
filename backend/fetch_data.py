@@ -10,12 +10,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- API Configuration ---
+# This is the correct way to load the key with a fallback for local testing.
 API_KEY = os.getenv("FMP_API_KEY", "GLX7pkHb0CKnCkA2ThBMZqs5911mGOO1")
 BASE_URL = "https://financialmodelingprep.com/api/v3"
 
 # --- Caching Mechanism ---
 CACHE: Dict[str, Any] = {}
-CACHE_EXPIRY_SECONDS = 120 # Cache for 2 minutes to respect API limits
+CACHE_EXPIRY_SECONDS = 120
 
 def get_from_cache(key: str) -> Optional[Any]:
     if key in CACHE:
@@ -28,10 +29,11 @@ def set_in_cache(key: str, data: Any):
     CACHE[key] = (data, time.time())
 
 # --- Mappings for FMP API ---
+# CORRECTED: The free tier only supports daily data, so we adjust the date ranges.
 DATE_RANGES = {
-    "1D": (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d'),
-    "1W": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
-    "1M": (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
+    "1D": (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'), # Fetch last 7 days for 1D view
+    "1W": (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d'),
+    "1M": (datetime.now() - timedelta(days=45)).strftime('%Y-%m-%d'),
     "6M": (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d'),
     "1Y": (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'),
     "5Y": (datetime.now() - timedelta(days=365*5)).strftime('%Y-%m-%d'),
@@ -63,6 +65,10 @@ async def fetch_historical_data(ticker: str, period_key: str) -> pd.DataFrame:
         df = pd.DataFrame(historical_data)
         df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
         df['Date'] = pd.to_datetime(df['Date'])
+        
+        # For 1D view, we only show the most recent data points from the daily data fetched
+        if period_key == "1D":
+            df = df.tail(1) # Or adjust as needed, e.g., tail(5) for more context
         
         set_in_cache(cache_key, df)
         return df.sort_values(by='Date', ascending=True)
@@ -117,7 +123,6 @@ async def fetch_stock_info(ticker: str) -> Optional[Dict[str, Any]]:
 async def fetch_batch_stock_info(tickers: List[str]) -> Dict[str, Any]:
     if not tickers: return {}
     
-    # Use reliable international tickers for the ticker tape as FMP has limits on index tickers
     if "^NSEI" in tickers or "^BSESN" in tickers:
         tickers = ["SPY", "DIA"] 
     
@@ -154,4 +159,4 @@ async def fetch_batch_stock_info(tickers: List[str]) -> Dict[str, Any]:
         return {t: {"currentPrice": 0, "change": 0, "percentChange": 0} for t in tickers}
 
 async def fetch_data_for_range(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    return await fetch_historical_data(ticker, "5Y") # Fallback to 5Y data for export
+    return await fetch_historical_data(ticker, "5Y")
