@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- API Configuration ---
-API_KEY = os.getenv("YF_API_KEY")
+API_KEY = os.getenv("gPjhcvohSd2iW0jSd0oYZ9KLE8jksnMK14wZIyWD")
 BASE_URL = "https://yfapi.net"
 
 # --- Caching Mechanism ---
