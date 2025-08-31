@@ -6,18 +6,10 @@ bcrypt==3.2.2
 python-multipart==0.0.6
 requests==2.31.0
 
-# --- Core Data & ML Libraries (Pinned to stable versions) ---
+# --- Core Data Libraries ---
 numpy==1.24.4
 pandas==2.0.3
-scikit-learn==1.3.2
-tensorflow-cpu==2.15.0
-scipy==1.11.4
-joblib==1.3.2
-threadpoolctl==3.2.0
-
-# --- Visualization ---
-matplotlib==3.8.1
-seaborn==0.13.0
+scikit-learn==1.3.2 # Kept for potential future use (e.g., scaling)
 
 # --- Indicators & Finance ---
 pandas-ta==0.3.14b
