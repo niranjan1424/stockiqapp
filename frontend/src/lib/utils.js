@@ -6,7 +6,8 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs))
 }
 
-const API_URL = "https://stockiqapp.onrender.com";
+const API_URL = ["https://stockiqapp.onrender.com","http://localhost:3000",
+];
 
 export async function apiCall(endpoint, method = 'GET', body = null) {
   try {
