@@ -23,7 +23,7 @@ import backtester
 # --- App Setup ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Stock Analysis API v18 (FMP Stable)", version="18.0.0")
+app = FastAPI(title="Stock Analysis API v19 (Final Stable)", version="19.0.0")
 
 @app.get("/")
 async def root():
@@ -60,7 +60,6 @@ class AnalysisRequest(BaseModel):
     period: str
     indicators: List[IndicatorSetting]
 
-# CORRECTED: Changed marketCap to Optional[int] and other fields to handle potential None values
 class AnalysisResponse(BaseModel):
     ticker: str
     data: List[Dict[str, Any]]
@@ -93,11 +92,16 @@ class BacktestResponse(BaseModel): results: List[Dict]; summary: Dict[str, Any]
 # --- Database & News Helper Functions ---
 def get_db(filename: str) -> Dict:
     try:
-        with open(filename, "r") as f: content = f.read(); return json.loads(content) if content else {}
+        # Use absolute path for reliability on server
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(base_dir, filename)
+        with open(file_path, "r") as f: content = f.read(); return json.loads(content) if content else {}
     except (FileNotFoundError, json.JSONDecodeError): return {}
 
 def save_db(db: Dict, filename: str):
-    with open(filename, "w") as f: json.dump(db, f, indent=4)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(base_dir, filename)
+    with open(file_path, "w") as f: json.dump(db, f, indent=4)
 
 def get_fallback_news():
     try:
@@ -120,21 +124,23 @@ async def signup(user: UserCreate):
     if user.username in users_db: raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
     users_db[user.username] = {"hashed_password": pwd_context.hash(user.password)}
     save_db(users_db, USERS_DB_FILE)
-    transactions_db = get_db(TRANSACTIONS_DB_FILE); transactions_db[user.username] = []; save_db(transactions_db, TRANSACTIONS_DB_FILE)
+    transactions_db = get_db(TRANSACTIONS_DB_FILE)
+    transactions_db[user.username] = []
+    save_db(transactions_db, TRANSACTIONS_DB_FILE)
     return {"username": user.username}
 
 @app.post("/login")
 async def login(user: UserLogin):
-    db = get_db(USERS_DB_FILE)
-    db_user = db.get(user.username)
+    users_db = get_db(USERS_DB_FILE)
+    db_user = users_db.get(user.username)
     if not db_user or not pwd_context.verify(user.password, db_user["hashed_password"]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incorrect username or password")
     return {"username": user.username}
 
 @app.post("/verify-password")
 async def verify_password(user: UserLogin):
-    db = get_db(USERS_DB_FILE)
-    db_user = db.get(user.username)
+    users_db = get_db(USERS_DB_FILE)
+    db_user = users_db.get(user.username)
     if db_user and pwd_context.verify(user.password, db_user["hashed_password"]):
         return {"verified": True}
     return {"verified": False}
@@ -189,7 +195,6 @@ async def get_all_tickers():
 
 @app.get("/get-exchange-rate", response_model=ExchangeRateResponse)
 async def get_exchange_rate():
-    # In a real app, fetch this from an API. For now, a static value is fine.
     return {"usd_to_inr": 83.50}
         
 @app.get("/general-news", response_model=List[NewsItem])
@@ -211,7 +216,7 @@ async def analyze_stock(req: AnalysisRequest):
     indicators_as_dicts = [ind.dict() for ind in req.indicators]
     df_with_indicators = indicators.calculate_indicators(df_chart.set_index('Date'), indicators_as_dicts)
     
-    news_dict_list = get_fallback_news() # Using fallback news for reliability
+    news_dict_list = get_fallback_news()
     
     current_price = stock_info.get("currentPrice") or df_with_indicators['Close'].iloc[-1]
     chart_data_list = df_with_indicators.reset_index().replace({pd.NA: None, np.nan: None}).to_dict(orient="records")
@@ -230,8 +235,6 @@ async def analyze_stock(req: AnalysisRequest):
 
 @app.get("/predict", response_model=PredictionResponse)
 async def predict_stock(ticker: str):
-    # This is a placeholder as ML model training is complex and resource-intensive for a live server
-    # In a real-world scenario, you would call a pre-trained model here.
     df = await fetch_data.fetch_historical_data(ticker, "1M")
     if df.empty:
         raise HTTPException(status_code=404, detail="Not enough data for prediction.")
