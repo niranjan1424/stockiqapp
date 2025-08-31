@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- API Configuration ---
-API_KEY = os.getenv("GLX7pkHb0CKnCkA2ThBMZqs5911mGOO1")
+API_KEY = os.getenv("FMP_API_KEY", "GLX7pkHb0CKnCkA2ThBMZqs5911mGOO1")
 BASE_URL = "https://financialmodelingprep.com/api/v3"
 
 # --- Caching Mechanism ---
