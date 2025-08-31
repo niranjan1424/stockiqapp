@@ -1,17 +1,21 @@
-import yfinance as yf
+import requests
 import pandas as pd
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-import asyncio
+import os
 import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- API Configuration ---
+API_KEY = os.getenv("YF_API_KEY")
+BASE_URL = "https://yfapi.net"
+
 # --- Caching Mechanism ---
 CACHE: Dict[str, Any] = {}
-CACHE_EXPIRY_SECONDS = 60
+CACHE_EXPIRY_SECONDS = 120
 
 def get_from_cache(key: str) -> Optional[Any]:
     if key in CACHE:
@@ -23,15 +27,15 @@ def get_from_cache(key: str) -> Optional[Any]:
 def set_in_cache(key: str, data: Any):
     CACHE[key] = (data, time.time())
 
-# --- Mappings for yfinance ---
+# --- Mappings for YH Finance API ---
 PERIOD_MAPPING = {
-    "1D": {"period": "2d", "interval": "5m"},
-    "1W": {"period": "5d", "interval": "30m"},
-    "1M": {"period": "1mo", "interval": "90m"},
-    "6M": {"period": "6mo", "interval": "1d"},
-    "1Y": {"period": "1y", "interval": "1d"},
-    "5Y": {"period": "5y", "interval": "1wk"},
-    "ALL": {"period": "max", "interval": "1mo"},
+    "1D": {"range": "1d", "interval": "5m"},
+    "1W": {"range": "5d", "interval": "30m"},
+    "1M": {"range": "1mo", "interval": "90m"},
+    "6M": {"range": "6mo", "interval": "1d"},
+    "1Y": {"range": "1y", "interval": "1d"},
+    "5Y": {"range": "5y", "interval": "1wk"},
+    "ALL": {"range": "max", "interval": "1mo"},
 }
 
 async def fetch_historical_data(ticker: str, period_key: str) -> pd.DataFrame:
@@ -41,22 +45,40 @@ async def fetch_historical_data(ticker: str, period_key: str) -> pd.DataFrame:
         return cached_data
 
     params = PERIOD_MAPPING.get(period_key, PERIOD_MAPPING["1M"])
+    endpoint = f"/v8/finance/chart/{ticker}"
+    headers = {'X-API-KEY': API_KEY}
+    
     try:
-        df = yf.download(ticker, period=params["period"], interval=params["interval"], progress=False, auto_adjust=True)
-        if df.empty:
-            logger.warning(f"No historical data returned for {ticker} with period {period_key}")
+        response = requests.get(f"{BASE_URL}{endpoint}", params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+        chart_data = data.get("chart", {}).get("result", [])[0]
+        if not chart_data or "timestamp" not in chart_data:
+            logger.warning(f"No historical data in response for {ticker}")
             return pd.DataFrame()
 
-        df.reset_index(inplace=True)
-        date_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
-        df.rename(columns={date_col: "Date"}, inplace=True)
-        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
+        timestamps = chart_data["timestamp"]
+        ohlc = chart_data["indicators"]["quote"][0]
         
-        final_df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-        set_in_cache(cache_key, final_df)
-        return final_df
-    except Exception as e:
-        logger.error(f"yfinance fetch_historical_data failed for {ticker}: {e}")
+        df = pd.DataFrame({
+            'Date': [datetime.fromtimestamp(ts) for ts in timestamps],
+            'Open': ohlc['open'],
+            'High': ohlc['high'],
+            'Low': ohlc['low'],
+            'Close': ohlc['close'],
+            'Volume': ohlc['volume']
+        })
+        
+        df.dropna(inplace=True)
+        set_in_cache(cache_key, df)
+        return df
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"YH API request failed for {ticker} historical data: {e}")
+        return pd.DataFrame()
+    except (KeyError, IndexError, TypeError) as e:
+        logger.error(f"Error parsing historical data for {ticker}: {e}")
         return pd.DataFrame()
 
 async def fetch_stock_info(ticker: str) -> Optional[Dict[str, Any]]:
@@ -64,75 +86,77 @@ async def fetch_stock_info(ticker: str) -> Optional[Dict[str, Any]]:
     cached_data = get_from_cache(cache_key)
     if cached_data is not None:
         return cached_data
-        
+
+    endpoint = f"/v6/finance/quote"
+    headers = {'X-API-KEY': API_KEY}
+    params = {'symbols': ticker}
+
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        if not info or info.get('quoteType') == 'NONE' or info.get('regularMarketPrice') is None:
-            logger.warning(f"Could not retrieve valid info for ticker: {ticker}")
-            hist = stock.history(period="2d")
-            if not hist.empty:
-                info = {"symbol": ticker, "currentPrice": hist['Close'].iloc[-1], "previousClose": hist['Close'].iloc[-2] if len(hist) > 1 else None}
-            else:
-                 return None
+        response = requests.get(f"{BASE_URL}{endpoint}", params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
         
-        launch_date = "N/A"
-        timestamp = info.get("firstTradeDateEpochUtc")
-        if timestamp:
-            launch_date = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
-        
+        info = data.get("quoteResponse", {}).get("result", [])[0]
+        if not info:
+            logger.warning(f"No profile info found for {ticker}")
+            return None
+
         required_info = {
             "symbol": info.get("symbol"),
-            "currentPrice": info.get("regularMarketPrice") or info.get("currentPrice"),
-            "previousClose": info.get("previousClose"),
+            "currentPrice": info.get("regularMarketPrice"),
+            "previousClose": info.get("regularMarketPreviousClose"),
             "marketCap": info.get("marketCap"),
             "trailingPE": info.get("trailingPE"),
-            "launchDate": launch_date
+            "launchDate": str(datetime.fromtimestamp(info.get("firstTradeDateMilliseconds", 0)//1000).date()) if info.get("firstTradeDateMilliseconds") else "N/A"
         }
         set_in_cache(cache_key, required_info)
         return required_info
     except Exception as e:
-        logger.error(f"An exception occurred in fetch_stock_info for {ticker}: {e}")
+        logger.error(f"Error fetching stock info for {ticker}: {e}")
         return None
 
 async def fetch_batch_stock_info(tickers: List[str]) -> Dict[str, Any]:
     if not tickers: return {}
     
-    cache_key = f"batch_{','.join(sorted(tickers))}"
+    ticker_string = ",".join(tickers)
+    cache_key = f"batch_{ticker_string}"
     cached_data = get_from_cache(cache_key)
     if cached_data is not None:
         return cached_data
-        
+
+    endpoint = f"/v6/finance/quote"
+    headers = {'X-API-KEY': API_KEY}
+    params = {'symbols': ticker_string}
+
     try:
-        data = yf.download(tickers, period="2d", progress=False, group_by='ticker')
+        response = requests.get(f"{BASE_URL}{endpoint}", params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        
         results = {}
-        for ticker in tickers:
-            ticker_data = data.get(ticker, pd.DataFrame())
-            if not ticker_data.empty and 'Close' in ticker_data:
-                close_prices = ticker_data['Close'].dropna()
-                if not close_prices.empty:
-                    current_price = close_prices.iloc[-1]
-                    previous_close = close_prices.iloc[-2] if len(close_prices) > 1 else current_price
-                    change = current_price - previous_close
-                    percent_change = (change / previous_close) * 100 if previous_close != 0 else 0
-                    results[ticker] = {"currentPrice": float(current_price), "change": float(change), "percentChange": float(percent_change)}
-                else:
-                    results[ticker] = {"currentPrice": 0, "change": 0, "percentChange": 0}
-            else:
-                results[ticker] = {"currentPrice": 0, "change": 0, "percentChange": 0}
-        set_in_cache(cache_key, results)
-        return results
+        result_list = data.get("quoteResponse", {}).get("result", [])
+        if result_list:
+            for item in result_list:
+                ticker_symbol = item.get("symbol")
+                if ticker_symbol:
+                    results[ticker_symbol] = {
+                        "currentPrice": item.get("regularMarketPrice", 0),
+                        "change": item.get("regularMarketChange", 0),
+                        "percentChange": item.get("regularMarketChangePercent", 0)
+                    }
+        
+        # Remap for frontend display
+        final_results = {}
+        for key, value in results.items():
+            if key == "^NSEI": final_results["NIFTY 50"] = value
+            elif key == "^BSESN": final_results["SENSEX"] = value
+            else: final_results[key] = value
+        
+        set_in_cache(cache_key, final_results)
+        return final_results
     except Exception as e:
-        logger.error(f"Batch fetch failed for {tickers}: {e}")
+        logger.error(f"Batch fetch failed for tickers {tickers}: {e}")
         return {t: {"currentPrice": 0, "change": 0, "percentChange": 0} for t in tickers}
 
 async def fetch_data_for_range(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    try:
-        df = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
-        if df.empty: return pd.DataFrame()
-        df.reset_index(inplace=True)
-        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
-        return df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-    except Exception as e:
-        logger.error(f"YFinance fetch_data_for_range failed for {ticker}: {e}")
-        return pd.DataFrame()
+    return await fetch_historical_data(ticker, "5Y") # Fallback to 5Y of daily data for export
