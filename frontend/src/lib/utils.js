@@ -6,8 +6,16 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs))
 }
 
-const API_URL = ["https://stockiqapp.onrender.com","http://localhost:3000",
-];
+// THIS IS THE CORRECT WAY TO HANDLE DEPLOYMENT AND LOCAL DEVELOPMENT
+let API_URL;
+
+if (process.env.NODE_ENV === 'production') {
+  // This will be used when your app is deployed on Netlify
+  API_URL = "https://stockiqapp.onrender.com";
+} else {
+  // This will be used when you run `npm start` on your own computer
+  API_URL = "http://127.0.0.1:8000";
+}
 
 export async function apiCall(endpoint, method = 'GET', body = null) {
   try {
